@@ -1,5 +1,8 @@
 # UC Davis AI — MCP Server
 
+**Live:** `https://mcp-ucdavis-949842158080.us-central1.run.app/mcp`
+(Cloud Run, public, no auth · `/health` for a status check)
+
 An [MCP](https://modelcontextprotocol.io) server that exposes two tools to any
 MCP-capable AI application (Claude Desktop, Claude Code, Cursor, custom agents,
 …):
@@ -122,16 +125,21 @@ uv run python server.py
 # Health check:  http://127.0.0.1:8080/health
 ```
 
-### Try it from an MCP client
+### Connect an MCP client
 
-Claude Code:
+Point any of these at the deployed endpoint
+`https://mcp-ucdavis-949842158080.us-central1.run.app/mcp` (or your local
+`http://127.0.0.1:8080/mcp`):
 
-```bash
-claude mcp add --transport http ucdavis-ai http://127.0.0.1:8080/mcp
-```
-
-Claude Desktop (`claude_desktop_config.json`) or any client that speaks
-Streamable HTTP — point it at `<base-url>/mcp`.
+| Client | How |
+|---|---|
+| **Claude Code** | `claude mcp add --transport http ucdavis-ai https://mcp-ucdavis-949842158080.us-central1.run.app/mcp` (add `-s user` for all projects) |
+| **Claude Desktop** | Settings → Connectors → Add custom connector → paste the `/mcp` URL. Older builds: add an `mcpServers` entry running `npx -y mcp-remote <url>`. |
+| **Claude.ai** (Pro/Max/Team/Enterprise) | Settings → Connectors → Add custom connector → paste the `/mcp` URL, no auth. |
+| **Anthropic API** | `mcp_servers=[{"type":"url","url":"<url>/mcp","name":"ucdavis-ai"}]` with the `mcp-client-2025-04-04` beta. |
+| **ChatGPT** (Plus/Pro/Team/Enterprise) | Settings → Connectors → enable Developer mode → Create connector → paste the `/mcp` URL, auth None. Enable per-chat. |
+| **OpenAI API** | `tools=[{"type":"mcp","server_label":"ucdavis_ai","server_url":"<url>/mcp","require_approval":"never"}]` (Responses API). |
+| **MCP Inspector** | `npx @modelcontextprotocol/inspector` → connect to the `/mcp` URL. |
 
 Quick scripted check:
 
@@ -155,15 +163,24 @@ asyncio.run(main())
 
 ## Deployment
 
-Google Cloud Run + Cloud SQL (Postgres/`pgvector`), deployed by GitHub Actions
-on push to `main`. The service is deployed `--allow-unauthenticated` (open /
-public, as chosen) so any AI application can connect at:
+Runs on **Google Cloud Run** (`mcp-ucdavis`, project `uc-davis-ai-chatbot`,
+`us-central1`), `--allow-unauthenticated`, reusing the **UAC** project's Cloud
+SQL instance (`uac-db`) and its already-built `uc_davis_ai` pgvector
+collection — no separate database, no re-ingestion.
 
-```
-https://<cloud-run-url>/mcp
+Currently deployed manually:
+
+```bash
+gcloud run deploy mcp-ucdavis --source . --region=us-central1 \
+  --allow-unauthenticated --memory=2Gi --cpu=2 --min-instances=0 --max-instances=3 --timeout=300 \
+  --add-cloudsql-instances="uc-davis-ai-chatbot:us-central1:uac-db" \
+  --set-env-vars="CLOUD_SQL_CONNECTION_NAME=uc-davis-ai-chatbot:us-central1:uac-db,DB_USER=uac-app,DB_NAME=uac,SEED_ON_STARTUP=true" \
+  --set-secrets="DB_PASSWORD=db-app-password:latest"
 ```
 
-Full one‑time setup is in [DEPLOYMENT.md](DEPLOYMENT.md).
+`.github/workflows/deploy.yml` can take over push-to-deploy once Workload
+Identity Federation is configured (uncomment its `push:` trigger). Full setup
+and the teardown command are in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Configuration
 
