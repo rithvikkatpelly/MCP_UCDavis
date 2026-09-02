@@ -1,0 +1,99 @@
+name: Deploy MCP server to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Also (re)build the vector store from the bundled PDFs before deploying"
+        type: boolean
+        default: false
+
+env:
+  REGION: ${{ vars.GCP_REGION }}
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  AR_REPO: ${{ vars.AR_REPO }}
+  SERVICE: ${{ vars.MCP_SERVICE }}
+  CLOUD_SQL_CONNECTION_NAME: ${{ vars.CLOUD_SQL_CONNECTION_NAME }}
+  DB_USER: ${{ vars.DB_USER }}
+  DB_NAME: ${{ vars.DB_NAME }}
+
+permissions:
+  contents: read
+  id-token: write # required for keyless Workload Identity Federation auth
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The image builds torch + the full LangChain stack, which can exceed
+      # the ~14GB free on a stock runner. These preinstalled SDKs are unused.
+      - name: Free up runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          docker system prune -af || true
+          df -h /
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Optional one-off: rebuild the pgvector collection from the bundled PDFs,
+      # connecting to Cloud SQL through the Auth Proxy from the runner. Trigger
+      # via "Run workflow" with seed=true (see DEPLOYMENT.md §Seed).
+      - name: Seed the vector store
+        if: ${{ inputs.seed }}
+        run: |
+          curl -sL -o cloud-sql-proxy \
+            https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy
+          ./cloud-sql-proxy --port 5432 "$CLOUD_SQL_CONNECTION_NAME" &
+          sleep 5
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          DB_PASSWORD=$(gcloud secrets versions access latest --secret=db-app-password)
+          DATABASE_URL="postgresql+psycopg://${DB_USER}:${DB_PASSWORD}@localhost:5432/${DB_NAME}" \
+            uv run python -m knowledge_base.build_index
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/mcp:${GITHUB_SHA}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --image="$IMAGE" \
+            --region="$REGION" \
+            --allow-unauthenticated \
+            --memory=2Gi \
+            --cpu=2 \
+            --min-instances=0 \
+            --max-instances=3 \
+            --timeout=300 \
+            --add-cloudsql-instances="$CLOUD_SQL_CONNECTION_NAME" \
+            --set-env-vars="CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_CONNECTION_NAME,DB_USER=$DB_USER,DB_NAME=$DB_NAME,SEED_ON_STARTUP=false" \
+            --set-secrets="DB_PASSWORD=db-app-password:latest"
+
+      - name: Show endpoint
+        run: |
+          URL=$(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)')
+          {
+            echo "### Deployed"
+            echo "- MCP endpoint: ${URL}/mcp"
+            echo "- Health: ${URL}/health"
+          } >> "$GITHUB_STEP_SUMMARY"
