@@ -1,8 +1,11 @@
 name: Deploy MCP server to Cloud Run
 
 on:
-  push:
-    branches: [main]
+  # Auto-deploy on push is disabled until Workload Identity Federation is
+  # configured (see DEPLOYMENT.md §4-6). Once the WIF_PROVIDER /
+  # WIF_SERVICE_ACCOUNT repo secrets exist, uncomment the `push` block below.
+  # push:
+  #   branches: [main]
   workflow_dispatch:
     inputs:
       seed:

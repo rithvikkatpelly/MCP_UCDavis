@@ -6,3 +6,4 @@ __pycache__/
 data/
 .cache/
 *.log
+.claude/settings.local.json
