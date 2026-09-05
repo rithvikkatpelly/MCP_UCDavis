@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # --- Builder: install deps and warm the HuggingFace model cache ---
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.30 /uv /uvx /usr/local/bin/
 
@@ -42,7 +42,7 @@ from rag.reranker import get_reranker_model; \
 get_embedding_model(); get_reranker_model()"
 
 # --- Runtime: slim image with just the venv, code, and model cache ---
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
