@@ -10,9 +10,9 @@ needs no LLM API key.
 
 import logging
 
+from knowledge_base.embedder import get_embedding_model
 from rag.reranker import rerank
 from rag.retriever import retrieve_candidates
-from knowledge_base.embedder import get_embedding_model
 
 logger = logging.getLogger(__name__)
 

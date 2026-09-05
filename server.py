@@ -14,10 +14,9 @@ Run locally:
 
 import logging
 import os
-
-import anyio
 from contextlib import asynccontextmanager
 
+import anyio
 from mcp.server.mcpserver import MCPServer
 from starlette.requests import Request
 from starlette.responses import JSONResponse

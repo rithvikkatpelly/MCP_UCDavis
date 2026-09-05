@@ -74,8 +74,7 @@ class Settings(BaseSettings):
                 f"{self.db_name}?host={socket_dir}"
             )
         return (
-            f"postgresql+psycopg://{self.db_user}:{self.db_password}"
-            f"@localhost:5432/{self.db_name}"
+            f"postgresql+psycopg://{self.db_user}:{self.db_password}@localhost:5432/{self.db_name}"
         )
 
 

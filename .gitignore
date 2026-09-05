@@ -6,4 +6,7 @@ __pycache__/
 data/
 .cache/
 *.log
+.pytest_cache/
+.ruff_cache/
+pytest.xml
 .claude/settings.local.json

@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
+  pull_request:
+    paths-ignore: ["**.md", "docs/**"]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install lint tools (dev group only — no torch)
+        run: uv sync --frozen --only-group dev
+      - name: ruff (lint)
+        run: uv run ruff check --output-format=github .
+      - name: ruff (format)
+        run: uv run ruff format --check --diff .
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+      - name: Sync deps (CPU torch, dev group)
+        run: uv sync --frozen
+      - name: pytest
+        run: uv run pytest --junitxml=pytest.xml
+      - name: Publish test summary
+        if: always()
+        run: |
+          echo "### pytest (py${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
+          uv run python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+          try:
+              s = ET.parse("pytest.xml").getroot()
+              ts = s if s.tag == "testsuite" else s[0]
+              a = ts.attrib
+              print(f"- {a.get('tests')} tests, {a.get('failures')} failed, "
+                    f"{a.get('errors')} errored, {a.get('skipped')} skipped "
+                    f"in {a.get('time')}s")
+          except Exception as e:
+              print(f"- (could not parse pytest.xml: {e})")
+          PY
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image bundles CPU torch + the LangChain stack + two HF models,
+      # which can exceed the ~14 GB free on a stock runner.
+      - name: Free up runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          docker system prune -af || true
+          df -h /
+
+      - name: Build image
+        run: docker build -t mcp-ucdavis:ci .
+
+      - name: Boot the container
+        run: |
+          docker run -d --name mcp -p 8080:8080 \
+            -e SEED_ON_STARTUP=false \
+            -e DATABASE_URL="postgresql+psycopg://ci:ci@127.0.0.1:5432/none" \
+            mcp-ucdavis:ci
+          for i in $(seq 1 45); do
+            curl -sf localhost:8080/health && break
+            sleep 2
+          done
+
+      - name: Smoke test — health + MCP contract
+        run: |
+          set -euo pipefail
+          curl -sf localhost:8080/health | grep -q '"status":"ok"'
+
+          init=$(curl -s -X POST localhost:8080/mcp \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}')
+          echo "$init" | grep -q '"name":"ucdavis-ai"'
+
+          tools=$(curl -s -X POST localhost:8080/mcp \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
+          echo "$tools" | grep -q '"search_uc_davis_ai_docs"'
+          echo "$tools" | grep -q '"web_search"'
+          echo "MCP contract OK"
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs mcp || true

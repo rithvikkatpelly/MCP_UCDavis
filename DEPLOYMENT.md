@@ -201,6 +201,27 @@ gcloud iam workload-identity-pools providers describe "github-provider" \
 | `DB_USER` | `mcp-app` |
 | `DB_NAME` | `mcp` |
 
+Nothing here is a raw credential — `WIF_*` are resource names, the rest are
+non‑secret identifiers (they could be plain `env:` in the YAML; they're
+Variables so the workflow file has no project‑specific values in git). The
+only actual secret, the DB password, never touches GitHub: the container
+reads it from Secret Manager at runtime (`--set-secrets`), and the optional
+seed step reads it with `gcloud secrets versions access`.
+
+**`ci.yml` needs no secrets or variables at all** — it's fully hermetic.
+
+### Optional extras you could wire in
+
+| Secret / var | For |
+|---|---|
+| `CODECOV_TOKEN` | Upload `pytest` coverage to Codecov (private repos). |
+| `SLACK_WEBHOOK_URL` | Post deploy success/failure to Slack. |
+| `GHCR` / `PAT` | Also push the image to GitHub Container Registry as a backup registry. |
+| `TAVILY_API_KEY` / `BRAVE_API_KEY` | Only if you swap DuckDuckGo for a keyed search provider — then also add it to `--set-secrets` on deploy. |
+| `SENTRY_DSN` | Ship runtime errors to Sentry (add as a deploy env var, not a build secret). |
+
+`GITHUB_TOKEN` is provided automatically — no need to add it.
+
 ---
 
 ## 7. Seed the vector store (one time)

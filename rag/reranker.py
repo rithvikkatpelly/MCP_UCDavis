@@ -32,9 +32,8 @@ def rerank(question: str, candidates: list[Document]) -> list[tuple[Document, fl
     scores = model.predict(pairs)
 
     scored_candidates = sorted(
-        zip(candidates, scores), key=lambda item: item[1], reverse=True
+        zip(candidates, scores, strict=True), key=lambda item: item[1], reverse=True
     )
     return [
-        (document, float(score))
-        for document, score in scored_candidates[: settings.rerank_top_n]
+        (document, float(score)) for document, score in scored_candidates[: settings.rerank_top_n]
     ]

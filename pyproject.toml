@@ -22,6 +22,13 @@ dependencies = [
     "psycopg[binary]>=3.1",
 ]
 
+[dependency-groups]
+dev = [
+    "ruff==0.16.6",
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+]
+
 [tool.uv.sources]
 torch = [{ index = "pytorch-cpu" }]
 
@@ -29,3 +36,21 @@ torch = [{ index = "pytorch-cpu" }]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv", "UC Davis AI", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# Re-exports and import-order in package inits are intentional.
+"__init__.py" = ["F401"]

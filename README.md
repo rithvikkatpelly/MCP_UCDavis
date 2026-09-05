@@ -182,6 +182,24 @@ gcloud run deploy mcp-ucdavis --source . --region=us-central1 \
 Identity Federation is configured (uncomment its `push:` trigger). Full setup
 and the teardown command are in [DEPLOYMENT.md](DEPLOYMENT.md).
 
+## CI
+
+`.github/workflows/ci.yml` runs on every push/PR:
+
+| Job | What |
+|---|---|
+| **lint** | `ruff check` + `ruff format --check` (dev deps only — no torch). |
+| **test** | `uv sync --frozen` then `pytest` on Python 3.11 and 3.12. Unit tests mock the embedder/retriever/reranker and the DuckDuckGo client — hermetic, ~10 s, no model download, no DB, no network. |
+| **docker** | `docker build .`, boot the container, and smoke-test `GET /health` + MCP `initialize` / `tools/list` — guards the contract external clients depend on. |
+
+```bash
+uv sync                        # includes the dev group
+uv run pytest                  # or: uv run ruff check .
+```
+
+No secrets are needed for CI. The **deploy** workflow needs the Workload
+Identity Federation secrets/variables listed in [DEPLOYMENT.md](DEPLOYMENT.md) §6.
+
 ## Configuration
 
 All settings (see [`core/config.py`](core/config.py)) are environment
@@ -211,4 +229,6 @@ knowledge_base/          ingestion pipeline (loader → preprocess → chunk →
 core/config.py           settings
 db/session.py            SQLAlchemy engine (only used to check if the collection is seeded)
 UC Davis AI/             the 8 bundled source PDFs
+tests/                   hermetic unit + smoke tests (pytest)
+.github/workflows/       ci.yml (lint/test/docker) · deploy.yml (Cloud Run)
 ```
