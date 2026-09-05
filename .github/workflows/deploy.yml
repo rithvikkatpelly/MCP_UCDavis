@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # The image builds torch + the full LangChain stack, which can exceed
       # the ~14GB free on a stock runner. These preinstalled SDKs are unused.
