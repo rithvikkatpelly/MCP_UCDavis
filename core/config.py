@@ -53,6 +53,22 @@ class Settings(BaseSettings):
     web_search_region: str = "us-en"
     web_search_max_results: int = 5
 
+    # --- URL fetch (fetch_url tool) ---
+    # This server is public/unauthenticated, so fetch_url refuses any host that
+    # resolves to a non-public address (loopback, private, link-local, cloud
+    # metadata). These bound the blast radius of a fetch.
+    fetch_url_timeout_seconds: float = 12.0
+    fetch_url_max_bytes: int = 5_000_000
+    fetch_url_max_chars: int = 20_000
+    fetch_url_max_redirects: int = 4
+    # `Mozilla/5.0 (compatible; ...)` is the long-standing well-behaved-bot
+    # convention (cf. Googlebot); it clears basic User-Agent filters while
+    # still identifying the crawler honestly.
+    fetch_url_user_agent: str = (
+        "Mozilla/5.0 (compatible; mcp-ucdavis-fetch/1.0; "
+        "+https://github.com/rithvikkatpelly/MCP_UCDavis)"
+    )
+
     # --- Database (Cloud SQL Postgres) ---
     # Set DATABASE_URL directly for local dev. In production,
     # CLOUD_SQL_CONNECTION_NAME is set instead and the URL is built to use the

@@ -109,6 +109,7 @@ jobs:
             -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
           echo "$tools" | grep -q '"search_uc_davis_ai_docs"'
           echo "$tools" | grep -q '"web_search"'
+          echo "$tools" | grep -q '"fetch_url"'
           echo "MCP contract OK"
 
       - name: Container logs on failure

@@ -3,7 +3,7 @@
 **Live:** `https://mcp-ucdavis-949842158080.us-central1.run.app/mcp`
 (Cloud Run, public, no auth · `GET /` for service info · `GET /health` for a status check)
 
-An [MCP](https://modelcontextprotocol.io) server that exposes two tools to any
+An [MCP](https://modelcontextprotocol.io) server that exposes three tools to any
 MCP-capable AI application (Claude Desktop, Claude Code, Cursor, custom agents,
 …):
 
@@ -11,6 +11,7 @@ MCP-capable AI application (Claude Desktop, Claude Code, Cursor, custom agents,
 |---|---|
 | `search_uc_davis_ai_docs` | Semantic search (RAG retrieval) over UC Davis's official AI policy and guidance PDFs. Returns the most relevant passages with source document + page number. It does **not** write the answer — the calling model does, grounded on the passages. |
 | `web_search` | DuckDuckGo web search (no API key). Returns title / URL / snippet rows. |
+| `fetch_url` | Fetch a public `http(s)` URL and return its main readable text — readability extraction for HTML, text extraction for PDF. SSRF-guarded (refuses loopback / private / link-local / cloud-metadata hosts, re-validates every redirect), size- and time-bounded, text truncated. Use it to read a `web_search` hit in full, or a link the user pastes. |
 
 The RAG pipeline is ported from the sibling **UAC** project: PyMuPDF text
 extraction → cleaning → `SemanticChunker` → HuggingFace embeddings
@@ -36,6 +37,7 @@ flowchart LR
         subgraph tools["Tools"]
             T1["search_uc_davis_ai_docs"]
             T2["web_search"]
+            T3["fetch_url<br/>SSRF-guarded"]
         end
         subgraph rag["RAG pipeline (rag/)"]
             EMB["Query embedder<br/>all-MiniLM-L6-v2"]
@@ -55,14 +57,16 @@ flowchart LR
     end
 
     DDG["DuckDuckGo<br/>(ddgs, no API key)"]
+    WEB["Public web<br/>(HTML / PDF)"]
 
     C1 & C2 -- "Streamable HTTP" --> S
     RET -- "Unix socket /cloudsql" --> DB
     T2 --> DDG
+    T3 --> WEB
     cr -. "reads at startup" .-> SM
 
     classDef ext fill:#f4f4f4,stroke:#999,color:#333;
-    class DDG,SM ext;
+    class DDG,SM,WEB ext;
 ```
 
 ### A `search_uc_davis_ai_docs` call
@@ -213,6 +217,8 @@ variables, optionally from `.env`:
 | `SEED_ON_STARTUP` | `true` | Seed the collection at startup if empty. Set `false` in prod and seed explicitly. |
 | `WEB_SEARCH_REGION` | `us-en` | DuckDuckGo region. |
 | `RETRIEVAL_TOP_K` / `RERANK_TOP_N` | `20` / `5` | Retrieval and rerank sizes. |
+| `FETCH_URL_MAX_BYTES` / `FETCH_URL_MAX_CHARS` | `5_000_000` / `20_000` | `fetch_url` response and returned-text caps. |
+| `FETCH_URL_TIMEOUT_SECONDS` / `FETCH_URL_MAX_REDIRECTS` | `12` / `4` | `fetch_url` per-request timeout and redirect cap. |
 
 ## Project layout
 
@@ -221,6 +227,7 @@ server.py               MCP server + tool definitions + /health
 tools/
   rag_tool.py            search_knowledge_base(): embed → retrieve → rerank
   web_search.py          web_search(): DuckDuckGo
+  fetch_url.py           fetch_url(): SSRF-guarded fetch + HTML/PDF text extraction
 rag/
   retriever.py           pgvector similarity search
   reranker.py            cross-encoder reranking

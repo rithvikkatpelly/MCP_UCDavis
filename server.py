@@ -25,6 +25,7 @@ from core.config import get_settings
 from knowledge_base.build_index import ensure_index_populated
 from knowledge_base.embedder import get_embedding_model
 from rag.reranker import get_reranker_model
+from tools.fetch_url import fetch_url as run_fetch_url
 from tools.rag_tool import search_knowledge_base
 from tools.web_search import web_search as run_web_search
 
@@ -111,6 +112,26 @@ async def web_search(query: str, max_results: int = 5) -> list[dict]:
     """
     max_results = max(1, min(max_results, 10))
     return await anyio.to_thread.run_sync(run_web_search, query, max_results)
+
+
+@mcp.tool(
+    name="fetch_url",
+    title="Fetch a web page",
+    description=(
+        "Fetch a public http(s) URL and return its main readable text — "
+        "readability extraction for HTML pages, text extraction for PDFs. Use "
+        "this to read a web_search result in full, or when the user gives you a "
+        "link. Only public addresses are allowed (internal/private hosts are "
+        "refused); large responses are size-capped and the text is truncated."
+    ),
+)
+async def fetch_url(url: str) -> dict:
+    """Fetch a URL and return its readable text.
+
+    Args:
+        url: An http:// or https:// URL (HTML page or PDF).
+    """
+    return await anyio.to_thread.run_sync(run_fetch_url, url)
 
 
 @mcp.custom_route("/", methods=["GET"])
