@@ -1,17 +1,23 @@
 name: Deploy MCP server to Cloud Run
 
+# Deploys only after CI ("CI" workflow) succeeds on main, so a red build never
+# ships. `workflow_dispatch` also allows a manual deploy (and the one-off
+# vector-store seed) straight from the Actions tab.
 on:
-  # Auto-deploy on push is disabled until Workload Identity Federation is
-  # configured (see DEPLOYMENT.md §4-6). Once the WIF_PROVIDER /
-  # WIF_SERVICE_ACCOUNT repo secrets exist, uncomment the `push` block below.
-  # push:
-  #   branches: [main]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       seed:
         description: "Also (re)build the vector store from the bundled PDFs before deploying"
         type: boolean
         default: false
+
+concurrency:
+  group: deploy-cloud-run
+  cancel-in-progress: false
 
 env:
   REGION: ${{ vars.GCP_REGION }}
@@ -21,6 +27,7 @@ env:
   CLOUD_SQL_CONNECTION_NAME: ${{ vars.CLOUD_SQL_CONNECTION_NAME }}
   DB_USER: ${{ vars.DB_USER }}
   DB_NAME: ${{ vars.DB_NAME }}
+  DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 permissions:
   contents: read
@@ -28,16 +35,23 @@ permissions:
 
 jobs:
   deploy:
+    # Manual runs always proceed; auto runs only on a green CI result.
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout the commit CI validated
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
 
       # The image builds torch + the full LangChain stack, which can exceed
       # the ~14GB free on a stock runner. These preinstalled SDKs are unused.
       - name: Free up runner disk space
         run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
           docker system prune -af || true
           df -h /
 
@@ -50,9 +64,16 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Record the currently-serving revision (for rollback)
+        run: |
+          PREV=$(gcloud run services describe "$SERVICE" --region="$REGION" \
+            --format='value(status.traffic[0].revisionName)' 2>/dev/null || true)
+          echo "PREV_REVISION=$PREV" >> "$GITHUB_ENV"
+          echo "Currently serving: ${PREV:-<none>}"
+
       # Optional one-off: rebuild the pgvector collection from the bundled PDFs,
-      # connecting to Cloud SQL through the Auth Proxy from the runner. Trigger
-      # via "Run workflow" with seed=true (see DEPLOYMENT.md §Seed).
+      # connecting to Cloud SQL through the Auth Proxy. Trigger via
+      # "Run workflow" with seed=true (see DEPLOYMENT.md §7).
       - name: Seed the vector store
         if: ${{ inputs.seed }}
         run: |
@@ -72,7 +93,7 @@ jobs:
 
       - name: Build and push image
         run: |
-          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/mcp:${GITHUB_SHA}"
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/mcp:${DEPLOY_SHA}"
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
@@ -92,11 +113,38 @@ jobs:
             --set-env-vars="CLOUD_SQL_CONNECTION_NAME=$CLOUD_SQL_CONNECTION_NAME,DB_USER=$DB_USER,DB_NAME=$DB_NAME,SEED_ON_STARTUP=false" \
             --set-secrets="DB_PASSWORD=db-app-password:latest"
 
-      - name: Show endpoint
+      - name: Post-deploy smoke test
         run: |
+          set -euo pipefail
           URL=$(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)')
+          echo "URL=$URL" >> "$GITHUB_ENV"
+          curl -sf --retry 5 --retry-delay 3 --retry-connrefused "$URL/health" | grep -q '"status":"ok"'
+          curl -sf "$URL/" | grep -q '"mcp_endpoint":"/mcp"'
+          tools=$(curl -s -X POST "$URL/mcp" \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
+          for t in search_uc_davis_ai_docs web_search fetch_url; do
+            echo "$tools" | grep -q "\"$t\"" || { echo "::error::deployed server missing tool $t"; exit 1; }
+          done
+          echo "Smoke test passed against $URL"
+
+      - name: Roll back on smoke-test failure
+        if: failure()
+        run: |
+          if [ -z "${PREV_REVISION:-}" ]; then
+            echo "No previous revision recorded — nothing to roll back to."
+            exit 0
+          fi
+          echo "::warning::deploy or smoke test failed — routing traffic back to $PREV_REVISION"
+          gcloud run services update-traffic "$SERVICE" --region="$REGION" \
+            --to-revisions="$PREV_REVISION=100"
+
+      - name: Summary
+        if: success()
+        run: |
           {
-            echo "### Deployed"
+            echo "### Deployed \`${DEPLOY_SHA:0:7}\`"
             echo "- MCP endpoint: ${URL}/mcp"
             echo "- Health: ${URL}/health"
           } >> "$GITHUB_STEP_SUMMARY"

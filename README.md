@@ -172,7 +172,20 @@ Runs on **Google Cloud Run** (`mcp-ucdavis`, project `uc-davis-ai-chatbot`,
 SQL instance (`uac-db`) and its already-built `uc_davis_ai` pgvector
 collection — no separate database, no re-ingestion.
 
-Currently deployed manually:
+**`.github/workflows/deploy.yml`** deploys automatically: it triggers on
+`workflow_run` after the **CI** workflow succeeds on `main`, so a red build
+never ships. It builds the image (Cloud Build not needed — plain `docker build`
+on the runner), pushes to Artifact Registry, `gcloud run deploy`s, then
+smoke-tests the new revision (`/health`, `/`, all three tools in `tools/list`)
+and **rolls traffic back to the previous revision if the smoke test fails**.
+`workflow_dispatch` also allows a manual deploy / one-off vector-store seed.
+
+Auth is keyless via Workload Identity Federation. The repo Secrets/Variables
+are already set; the two remaining IAM commands (authorize this repo against
+the shared WIF provider) and the teardown command are in
+[DEPLOYMENT.md](DEPLOYMENT.md).
+
+Manual one-off deploy (no GitHub Actions):
 
 ```bash
 gcloud run deploy mcp-ucdavis --source . --region=us-central1 \
@@ -182,10 +195,6 @@ gcloud run deploy mcp-ucdavis --source . --region=us-central1 \
   --set-secrets="DB_PASSWORD=db-app-password:latest"
 ```
 
-`.github/workflows/deploy.yml` can take over push-to-deploy once Workload
-Identity Federation is configured (uncomment its `push:` trigger). Full setup
-and the teardown command are in [DEPLOYMENT.md](DEPLOYMENT.md).
-
 ## CI
 
 `.github/workflows/ci.yml` runs on every push/PR:
@@ -194,15 +203,15 @@ and the teardown command are in [DEPLOYMENT.md](DEPLOYMENT.md).
 |---|---|
 | **lint** | `ruff check` + `ruff format --check` (dev deps only — no torch). |
 | **test** | `uv sync --frozen` then `pytest` on Python 3.11 and 3.12. Unit tests mock the embedder/retriever/reranker and the DuckDuckGo client — hermetic, ~10 s, no model download, no DB, no network. |
-| **docker** | `docker build .`, boot the container, and smoke-test `GET /health` + MCP `initialize` / `tools/list` — guards the contract external clients depend on. |
+| **docker** | `docker build .`, boot the container, and smoke-test `GET /health`, `GET /`, and MCP `initialize` / `tools/list` (all three tools) — guards the contract external clients depend on. |
 
 ```bash
 uv sync                        # includes the dev group
 uv run pytest                  # or: uv run ruff check .
 ```
 
-No secrets are needed for CI. The **deploy** workflow needs the Workload
-Identity Federation secrets/variables listed in [DEPLOYMENT.md](DEPLOYMENT.md) §6.
+No secrets are needed for CI. The **deploy** workflow runs after CI passes on
+`main` (see [Deployment](#deployment)).
 
 ## Configuration
 

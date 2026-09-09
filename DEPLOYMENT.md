@@ -21,6 +21,49 @@ to gate access, put the service behind an API gateway or add a token check in
 
 ---
 
+## Current wiring (this repo, project `uc-davis-ai-chatbot`)
+
+Most of this is **already done** — it reuses the UAC project's infrastructure.
+Steps 1–13 below are the full from-scratch reference; here's the actual state:
+
+| Piece | Status |
+|---|---|
+| Cloud Run service `mcp-ucdavis` (`us-central1`, `--allow-unauthenticated`) | ✅ live |
+| Cloud SQL — reuses `uac-db`, database `uac`, user `uac-app`, collection `uc_davis_ai` | ✅ (already seeded) |
+| Artifact Registry repo `mcp-ucdavis` (`us-central1`) | ✅ created |
+| Runtime SA (`…-compute@`) — `secretmanager.secretAccessor` on `db-app-password`, `cloudsql.client` | ✅ |
+| Deployer SA `github-deployer@…` — `run.admin`, `artifactregistry.writer`, `secretmanager.secretAccessor`, `iam.serviceAccountUser` | ✅ |
+| WIF pool `github-pool` / provider `github-provider` | ✅ exists (scoped to `rithvikkatpelly/UAC` only — see below) |
+| GitHub repo **Secrets** `WIF_PROVIDER`, `WIF_SERVICE_ACCOUNT` | ✅ set |
+| GitHub repo **Variables** `GCP_PROJECT_ID`, `GCP_REGION`, `AR_REPO`, `MCP_SERVICE`, `CLOUD_SQL_CONNECTION_NAME`, `DB_USER`, `DB_NAME` | ✅ set |
+| `deploy.yml` trigger | ✅ `workflow_run` after the **CI** workflow succeeds on `main` (+ manual `workflow_dispatch`) |
+
+### Remaining — 2 commands (need an IAM admin; blocked for the assistant)
+
+The WIF provider is still locked to the UAC repo. Authorize this repo too:
+
+```bash
+# 1. widen the provider's condition to any repo you own
+gcloud iam workload-identity-pools providers update-oidc github-provider \
+  --project=uc-davis-ai-chatbot --location=global --workload-identity-pool=github-pool \
+  --attribute-condition="assertion.repository_owner == 'rithvikkatpelly'"
+
+# 2. let this repo's principalSet impersonate the deployer SA
+gcloud iam service-accounts add-iam-policy-binding \
+  github-deployer@uc-davis-ai-chatbot.iam.gserviceaccount.com \
+  --project=uc-davis-ai-chatbot --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/projects/949842158080/locations/global/workloadIdentityPools/github-pool/attribute.repository/rithvikkatpelly/MCP_UCDavis"
+```
+
+(gcloud will ask you to confirm loosening the condition on #1 — that's expected.
+Explicit-list alternative: `--attribute-condition="assertion.repository in ['rithvikkatpelly/UAC','rithvikkatpelly/MCP_UCDavis']"`.)
+
+After that: push to `main` → CI runs → on green, `deploy.yml` builds, deploys,
+smoke-tests (`/health`, `/`, all three tools in `tools/list`), and rolls traffic
+back to the previous revision if the smoke test fails.
+
+---
+
 ## 0. What you'll need
 
 - A Google account with billing enabled (new accounts get $300 / 90 days free).
