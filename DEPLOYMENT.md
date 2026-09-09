@@ -33,34 +33,35 @@ Steps 1–13 below are the full from-scratch reference; here's the actual state:
 | Artifact Registry repo `mcp-ucdavis` (`us-central1`) | ✅ created |
 | Runtime SA (`…-compute@`) — `secretmanager.secretAccessor` on `db-app-password`, `cloudsql.client` | ✅ |
 | Deployer SA `github-deployer@…` — `run.admin`, `artifactregistry.writer`, `secretmanager.secretAccessor`, `iam.serviceAccountUser` | ✅ |
-| WIF pool `github-pool` / provider `github-provider` | ✅ exists (scoped to `rithvikkatpelly/UAC` only — see below) |
-| GitHub repo **Secrets** `WIF_PROVIDER`, `WIF_SERVICE_ACCOUNT` | ✅ set |
+| WIF — **dedicated** provider `github-mcp` in pool `github-pool`, scoped to `assertion.repository == 'rithvikkatpelly/MCP_UCDavis'` (UAC's `github-provider` untouched) | ✅ created |
+| `github-deployer@…` SA — `workloadIdentityUser` for this repo's principalSet | ✅ bound |
+| GitHub repo **Secrets** `WIF_PROVIDER` (→ `…/providers/github-mcp`), `WIF_SERVICE_ACCOUNT` | ✅ set |
 | GitHub repo **Variables** `GCP_PROJECT_ID`, `GCP_REGION`, `AR_REPO`, `MCP_SERVICE`, `CLOUD_SQL_CONNECTION_NAME`, `DB_USER`, `DB_NAME` | ✅ set |
 | `deploy.yml` trigger | ✅ `workflow_run` after the **CI** workflow succeeds on `main` (+ manual `workflow_dispatch`) |
 
-### Remaining — 2 commands (need an IAM admin; blocked for the assistant)
+**End to end and verified:** push to `main` → CI runs → on green, `deploy.yml`
+checks out the CI‑validated SHA, `docker build`s, pushes to Artifact Registry,
+`gcloud run deploy`s, then smoke‑tests the new revision (`/health`, `/`, all
+three tools in `tools/list`) and routes traffic back to the previous revision
+if the smoke test fails. Manual deploy / one‑off seed: **Actions →
+Deploy MCP server to Cloud Run → Run workflow** (or `gh workflow run deploy.yml`).
 
-The WIF provider is still locked to the UAC repo. Authorize this repo too:
+The two IAM commands that wired the WIF provider + SA binding (kept here for
+disaster recovery):
 
 ```bash
-# 1. widen the provider's condition to any repo you own
-gcloud iam workload-identity-pools providers update-oidc github-provider \
+gcloud iam workload-identity-pools providers create-oidc github-mcp \
   --project=uc-davis-ai-chatbot --location=global --workload-identity-pool=github-pool \
-  --attribute-condition="assertion.repository_owner == 'rithvikkatpelly'"
+  --display-name="GitHub - MCP_UCDavis" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository == 'rithvikkatpelly/MCP_UCDavis'" \
+  --issuer-uri="https://token.actions.githubusercontent.com"
 
-# 2. let this repo's principalSet impersonate the deployer SA
 gcloud iam service-accounts add-iam-policy-binding \
   github-deployer@uc-davis-ai-chatbot.iam.gserviceaccount.com \
   --project=uc-davis-ai-chatbot --role=roles/iam.workloadIdentityUser \
   --member="principalSet://iam.googleapis.com/projects/949842158080/locations/global/workloadIdentityPools/github-pool/attribute.repository/rithvikkatpelly/MCP_UCDavis"
 ```
-
-(gcloud will ask you to confirm loosening the condition on #1 — that's expected.
-Explicit-list alternative: `--attribute-condition="assertion.repository in ['rithvikkatpelly/UAC','rithvikkatpelly/MCP_UCDavis']"`.)
-
-After that: push to `main` → CI runs → on green, `deploy.yml` builds, deploys,
-smoke-tests (`/health`, `/`, all three tools in `tools/list`), and rolls traffic
-back to the previous revision if the smoke test fails.
 
 ---
 
