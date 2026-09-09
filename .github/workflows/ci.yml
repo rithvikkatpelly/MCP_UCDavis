@@ -95,6 +95,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -sf localhost:8080/health | grep -q '"status":"ok"'
+          curl -sf localhost:8080/ | grep -q '"mcp_endpoint":"/mcp"'
 
           init=$(curl -s -X POST localhost:8080/mcp \
             -H 'Content-Type: application/json' \

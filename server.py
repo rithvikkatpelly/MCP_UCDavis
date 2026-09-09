@@ -31,6 +31,10 @@ from tools.web_search import web_search as run_web_search
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+SERVICE_NAME = "ucdavis-ai"
+SERVICE_VERSION = "1.0.0"
+REPO_URL = "https://github.com/rithvikkatpelly/MCP_UCDavis"
+
 
 @asynccontextmanager
 async def lifespan(_server: MCPServer):
@@ -52,7 +56,7 @@ async def lifespan(_server: MCPServer):
 
 
 mcp = MCPServer(
-    "ucdavis-ai",
+    SERVICE_NAME,
     title="UC Davis AI Knowledge Base",
     instructions=(
         "Tools for answering questions about UC Davis's AI policy and guidance. "
@@ -61,7 +65,7 @@ mcp = MCPServer(
         "web_search for anything outside those documents or for more recent "
         "information."
     ),
-    version="1.0.0",
+    version=SERVICE_VERSION,
     lifespan=lifespan,
 )
 
@@ -109,9 +113,26 @@ async def web_search(query: str, max_results: int = 5) -> list[dict]:
     return await anyio.to_thread.run_sync(run_web_search, query, max_results)
 
 
+@mcp.custom_route("/", methods=["GET"])
+async def root(_request: Request) -> JSONResponse:
+    """Human/browser landing info — the base URL is otherwise an MCP-only
+    endpoint that 404s in a browser."""
+    return JSONResponse(
+        {
+            "service": SERVICE_NAME,
+            "version": SERVICE_VERSION,
+            "description": "MCP server: RAG search over UC Davis AI policy docs + web search.",
+            "mcp_endpoint": "/mcp",
+            "health_endpoint": "/health",
+            "transport": "streamable-http",
+            "repository": REPO_URL,
+        }
+    )
+
+
 @mcp.custom_route("/health", methods=["GET"])
 async def health(_request: Request) -> JSONResponse:
-    return JSONResponse({"status": "ok"})
+    return JSONResponse({"status": "ok", "service": SERVICE_NAME, "version": SERVICE_VERSION})
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ its lifespan (no model load / DB call)."""
 from __future__ import annotations
 
 import asyncio
+import json
 
 import server
 
@@ -23,3 +24,23 @@ def test_each_tool_exposes_a_query_parameter():
     for name in ("search_uc_davis_ai_docs", "web_search"):
         props = (tools[name].input_schema or {}).get("properties", {})
         assert "query" in props, f"{name} must take a `query` argument"
+
+
+def _body(response) -> dict:
+    return json.loads(response.body)
+
+
+def test_health_route_reports_service_and_version():
+    payload = _body(asyncio.run(server.health(None)))
+    assert payload == {
+        "status": "ok",
+        "service": server.SERVICE_NAME,
+        "version": server.SERVICE_VERSION,
+    }
+
+
+def test_root_route_describes_the_mcp_endpoint():
+    payload = _body(asyncio.run(server.root(None)))
+    assert payload["service"] == server.SERVICE_NAME
+    assert payload["mcp_endpoint"] == "/mcp"
+    assert payload["repository"].startswith("https://github.com/")

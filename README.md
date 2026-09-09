@@ -1,7 +1,7 @@
 # UC Davis AI — MCP Server
 
 **Live:** `https://mcp-ucdavis-949842158080.us-central1.run.app/mcp`
-(Cloud Run, public, no auth · `/health` for a status check)
+(Cloud Run, public, no auth · `GET /` for service info · `GET /health` for a status check)
 
 An [MCP](https://modelcontextprotocol.io) server that exposes two tools to any
 MCP-capable AI application (Claude Desktop, Claude Code, Cursor, custom agents,
